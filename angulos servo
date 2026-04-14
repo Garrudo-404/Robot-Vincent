@@ -1,0 +1,11 @@
+void angulo_servomotor(int angulo) {
+    // proteger
+    if (angulo < 0) angulo = 0;
+    if (angulo > 180) angulo = 180;
+
+    // 2. 0° -> 25 | 180° -> 120
+    uint32_t valor_pwm = (uint32_t)(25.0f + ((float)angulo * (120.0f - 25.0f) / 180.0f));
+
+    // 3. Escribir en el registro del Timer
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, valor_pwm);
+}
