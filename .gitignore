@@ -67,3 +67,9 @@ ctrlp.root
 *.html
 Debug/
 Release/
+
+# Archivos de configuración específica del IDE
+.project
+.cproject
+.settings/
+.mxproject
