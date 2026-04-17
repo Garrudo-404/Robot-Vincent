@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "cmsis_os.h"
+#include <math.h> // Necesario para operaciones trigonométricas
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -42,7 +43,6 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* Definitions for task_Comm */
-//Escucha UART (nueva coordenada) y controla el gripper
 osThreadId_t task_CommHandle;
 const osThreadAttr_t task_Comm_attributes = {
   .name = "task_Comm",
@@ -50,7 +50,6 @@ const osThreadAttr_t task_Comm_attributes = {
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for task_PID */
-//PID de servos realimentados, gestiona compare register para ir modificando el PWM de los servos realimentados
 osThreadId_t task_PIDHandle;
 const osThreadAttr_t task_PID_attributes = {
   .name = "task_PID",
@@ -58,7 +57,6 @@ const osThreadAttr_t task_PID_attributes = {
   .priority = (osPriority_t) osPriorityRealtime,
 };
 /* Definitions for task_IK */
-//Se encarga del cálculo de la cinemática inversa: Recibe coordenadas, reenvía el ángulo a task_PID y actualiza el PWM de los servos de posición
 osThreadId_t task_IKHandle;
 const osThreadAttr_t task_IK_attributes = {
   .name = "task_IK",
@@ -66,7 +64,6 @@ const osThreadAttr_t task_IK_attributes = {
   .priority = (osPriority_t) osPriorityHigh,
 };
 /* Definitions for task_Planner */
-//Descompone trayectoria en puntos y se lo pasa a task_IK. Además se implementará una máquina de estados (espera, coger_color, pintando)
 osThreadId_t task_PlannerHandle;
 const osThreadAttr_t task_Planner_attributes = {
   .name = "task_Planner",
@@ -74,19 +71,16 @@ const osThreadAttr_t task_Planner_attributes = {
   .priority = (osPriority_t) osPriorityAboveNormal,
 };
 /* Definitions for Queue_commands */
-//Se encarga de pasar los comandos de task_Comm a task_Planer
 osMessageQueueId_t Queue_commandsHandle;
 const osMessageQueueAttr_t Queue_commands_attributes = {
   .name = "Queue_commands"
 };
 /* Definitions for Queue_points */
-//Se encarga de pasar la trayectoria descompuesta en puntos de task_Planner a task_IK
 osMessageQueueId_t Queue_pointsHandle;
 const osMessageQueueAttr_t Queue_points_attributes = {
   .name = "Queue_points"
 };
 /* Definitions for Queue_angles */
-//Se encarga de pasar los ángulos que deberían tener los servos realimentados de task_IK a task_PID
 osMessageQueueId_t Queue_anglesHandle;
 const osMessageQueueAttr_t Queue_angles_attributes = {
   .name = "Queue_angles"
@@ -97,7 +91,7 @@ const osMessageQueueAttr_t Queue_angles_attributes = {
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
-void StartDefaultTask(void *argument);
+void Start_task_Comm(void *argument);
 void Start_task_PID(void *argument);
 void Start_task_IK(void *argument);
 void Start_task_Planner(void *argument);
@@ -174,7 +168,7 @@ int main(void)
 
   /* Create the thread(s) */
   /* creation of task_Comm */
-  task_CommHandle = osThreadNew(StartDefaultTask, NULL, &task_Comm_attributes);
+  task_CommHandle = osThreadNew(Start_task_Comm, NULL, &task_Comm_attributes);
 
   /* creation of task_PID */
   task_PIDHandle = osThreadNew(Start_task_PID, NULL, &task_PID_attributes);
@@ -259,20 +253,47 @@ void SystemClock_Config(void)
 
 /* USER CODE END 4 */
 
-/* USER CODE BEGIN Header_StartDefaultTask */
+/* USER CODE BEGIN Header_Start_task_Comm */
 /**
-  * @brief  Function implementing the defaultTask thread.
+  * @brief  Function implementing the task_Comm thread.
   * @param  argument: Not used
   * @retval None
   */
-/* USER CODE END Header_StartDefaultTask */
-void StartDefaultTask(void *argument)
+/* USER CODE END Header_Start_task_Comm */
+/* USER CODE BEGIN Header_Start_task_Comm */
+/**
+  * @brief  Function implementing the task_Comm thread.
+  * @param  argument: Not used
+  * @retval None
+  */
+/* USER CODE BEGIN Header_Start_task_Comm */
+void Start_task_Comm(void *argument)
 {
   /* USER CODE BEGIN 5 */
-  /* Infinite loop */
+  Command_t test_command;
+
+  // Pequeña pausa inicial para que todo el sistema arranque
+  osDelay(2000);
+
   for(;;)
   {
-    osDelay(1);
+	  // Test 1: Dibujar una línea recta desde donde esté hasta el destino
+	test_command.type = CMD_MOVE_LINEAR;
+	test_command.x = 200.0f;    // Destino X (mm)
+	test_command.y = 50.0f;     // Destino Y (mm)
+	test_command.z = 20.0f;     // Altura de dibujo (mm)
+	test_command.param = 0.0f;  // No se usa en líneas
+
+	osMessageQueuePut(Queue_commandsHandle, &test_command, 0, osWaitForever);
+
+	 osDelay(10000); // Espera 10s para ver el movimiento
+
+	 // Test 2: Volver a Home
+	 test_command.type = CMD_HOME;
+	 osMessageQueuePut(Queue_commandsHandle, &test_command, 0, osWaitForever);
+
+	 //Damos 10 segundos antes de la siguiente instrucción
+	 osDelay(10000);
   }
   /* USER CODE END 5 */
 }
@@ -284,12 +305,12 @@ void StartDefaultTask(void *argument)
 * @retval None
 */
 /* USER CODE END Header_Start_task_PID */
-/* Esta función se encarga de recibir los ángulos (tipo definido Angle_t) que deberían tener los servomotores de realimentación e implementa un
-   PID para ajustar la salida PWM. Para ello se hará uso de una lectura ADC (potenciómetro del servomotor), que servirá como referencia
-   para caracterizar la realimentación */
 void Start_task_PID(void *argument)
 {
   /* USER CODE BEGIN Start_task_PID */
+	/* Esta función se encarga de recibir los ángulos (tipo definido Angle_t) que deberían tener los servomotores de realimentación e implementa un
+	   PID para ajustar la salida PWM. Para ello se hará uso de una lectura ADC (potenciómetro del servomotor), que servirá como referencia
+	   para caracterizar la realimentación */
   /* Infinite loop */
   for(;;)
   {
@@ -305,11 +326,11 @@ void Start_task_PID(void *argument)
 * @retval None
 */
 /* USER CODE END Header_Start_task_IK */
-/* Esta función recibe las coordenadas (tipo Point3D_t) y se encarga de calcular la cinemática inversa del robot (los ángulos requeridos por los actuadores)
- * También actualiza el PWM de los servomotores de posición, y envía el ángulo (tipo Angles_t) a task_PID*/
 void Start_task_IK(void *argument)
 {
   /* USER CODE BEGIN Start_task_IK */
+	/* Esta función recibe las coordenadas (tipo Point3D_t) y se encarga de calcular la cinemática inversa del robot (los ángulos requeridos por los actuadores)
+	 * También actualiza el PWM de los servomotores de posición, y envía el ángulo (tipo Angles_t) a task_PID*/
   /* Infinite loop */
   for(;;)
   {
@@ -325,15 +346,58 @@ void Start_task_IK(void *argument)
 * @retval None
 */
 /* USER CODE END Header_Start_task_Planner */
-/* Recibe los comandos (tipo Command_t) y se encarga de descomponer la trayectoria en puntos que task_IK pueda calcular (tipo Point3D_t)
- * Además tiene una máquina de estados (espera, coger_color y pintando) .*/
+
 void Start_task_Planner(void *argument)
 {
   /* USER CODE BEGIN Start_task_Planner */
-  /* Infinite loop */
+	/* Recibe los comandos (tipo Command_t) y se encarga de descomponer la trayectoria en puntos que task_IK pueda calcular (tipo Point3D_t)
+	   Además tiene una máquina de estados (espera, coger_color y pintando) .*/
+  Command_t cmd;
+  Point3D_t point;
+
+  // Posición actual del robot (inicializada en Home al arrancar)
+  float current_x = 100.0f, current_y = 0.0f, current_z = 100.0f;
+  const int pasos = 50; // Número de segmentos en los que dividimos la línea
+
   for(;;)
   {
-    osDelay(1);
+    if (osMessageQueueGet(Queue_commandsHandle, &cmd, NULL, osWaitForever) == osOK)
+    {
+      if (cmd.type == CMD_MOVE_LINEAR)
+      {
+        // Calculamos la distancia a recorrer en cada eje
+        float diff_x = (cmd.x - current_x) / pasos;
+        float diff_y = (cmd.y - current_y) / pasos;
+        float diff_z = (cmd.z - current_z) / pasos;
+
+        // Hacemos un bucle simple para descomponer la trayectoria en el número de pasos que hemos definido
+        for (int i = 1; i <= pasos; i++)
+        {
+          point.x = current_x + (diff_x * i);
+          point.y = current_y + (diff_y * i);
+          point.z = current_z + (diff_z * i);
+          point.speed = 10.0f; // El control de velocidad lo dejaremos para más adelante, pero damos un valor para verificar que se pasa correctamente el dato
+          point.pen_down = 1;
+
+          osMessageQueuePut(Queue_pointsHandle, &point, 0, osWaitForever);
+          osDelay(20); // Velocidad de generación de puntos
+        }
+
+        // Actualizamos la posición actual al finalizar la línea
+        current_x = cmd.x;
+        current_y = cmd.y;
+        current_z = cmd.z;
+      }
+      else if (cmd.type == CMD_HOME)
+      {
+        // En Home, mandamos un punto directo (Posibilidad de interpolarlo si vemos que se mueve muy bruscamente desde la posición en la que pinta)
+        point.x = 100.0f; point.y = 0.0f; point.z = 100.0f;
+        point.pen_down = 0;
+        osMessageQueuePut(Queue_pointsHandle, &point, 0, osWaitForever);
+
+        current_x = 100.0f; current_y = 0.0f; current_z = 100.0f;
+      }
+    }
   }
   /* USER CODE END Start_task_Planner */
 }
