@@ -75,6 +75,8 @@ typedef struct {
 
 /* USER CODE END EM */
 
+void HAL_TIM_MspPostInit(TIM_HandleTypeDef *htim);
+
 /* Exported functions prototypes ---------------------------------------------*/
 void Error_Handler(void);
 
@@ -83,6 +85,14 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define MOT_C_IN2_Pin GPIO_PIN_9
+#define MOT_C_IN2_GPIO_Port GPIOC
+#define MOT_C_IN1_Pin GPIO_PIN_8
+#define MOT_C_IN1_GPIO_Port GPIOA
+#define MOT_H_IN2_Pin GPIO_PIN_9
+#define MOT_H_IN2_GPIO_Port GPIOA
+#define MOT_H_IN1_Pin GPIO_PIN_10
+#define MOT_H_IN1_GPIO_Port GPIOA
 
 /* USER CODE BEGIN Private defines */
 
