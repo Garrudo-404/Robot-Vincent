@@ -375,7 +375,7 @@ static void MX_TIM2_Init(void)
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 0;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 4294967295;
+  htim2.Init.Period = 799;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_PWM_Init(&htim2) != HAL_OK)
@@ -424,7 +424,7 @@ static void MX_TIM3_Init(void)
   htim3.Instance = TIM3;
   htim3.Init.Prescaler = 0;
   htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim3.Init.Period = 65535;
+  htim3.Init.Period = 799;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_PWM_Init(&htim3) != HAL_OK)
@@ -473,7 +473,7 @@ static void MX_TIM4_Init(void)
   htim4.Instance = TIM4;
   htim4.Init.Prescaler = 15;
   htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim4.Init.Period = 65535;
+  htim4.Init.Period = 19999;
   htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_PWM_Init(&htim4) != HAL_OK)
@@ -583,8 +583,8 @@ void Start_task_Comm(void *argument)
 	 test_command.type = CMD_HOME;
 	 osMessageQueuePut(Queue_commandsHandle, &test_command, 0, osWaitForever);
 
-	 //Damos 10 segundos antes de la siguiente instrucción
-	 osDelay(10000);
+	 //Damos 20 segundos antes de la siguiente instrucción
+	 osDelay(20000);
   }
   /* USER CODE END 5 */
 }
@@ -603,6 +603,11 @@ void Start_task_PID(void *argument)
   /* USER CODE BEGIN Start_task_PID */
   Angles_t angulos_recibidos;
 
+  // ARRANCAR SEÑALES PWM
+    HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1); // Hombro ENA
+    HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1); // Codo ENB
+    HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1); // Base Servo
+    HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_2); // Muñeca Servo
   // --- Variables para Motores con Realimentación (q2, q3) ---
   int posicionDeseada[2] = {1160, 2048};
   float errorAcumulado[2] = {0, 0};
@@ -629,10 +634,16 @@ void Start_task_PID(void *argument)
     // 2. LECTURA ADC
     int valorPotenciometro[2];
     HAL_ADC_Start(&hadc1);
-    HAL_ADC_PollForConversion(&hadc1, 5);
-    valorPotenciometro[0] = HAL_ADC_GetValue(&hadc1); // Hombro
-    HAL_ADC_PollForConversion(&hadc1, 5);
-    valorPotenciometro[1] = HAL_ADC_GetValue(&hadc1); // Codo
+
+    // Esperar y leer la primera conversión (Hombro - Rank 1)
+        if (HAL_ADC_PollForConversion(&hadc1, 10) == HAL_OK) {
+            valorPotenciometro[0] = HAL_ADC_GetValue(&hadc1);
+        }
+
+        // Esperar y leer la segunda conversión (Codo - Rank 2)
+        if (HAL_ADC_PollForConversion(&hadc1, 10) == HAL_OK) {
+            valorPotenciometro[1] = HAL_ADC_GetValue(&hadc1);
+        }
     HAL_ADC_Stop(&hadc1);
 
     // 3. CÁLCULO DEL TIEMPO (dt)
