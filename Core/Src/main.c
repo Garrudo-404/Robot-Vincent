@@ -617,11 +617,10 @@ void Start_task_PID(void *argument)
   Angles_t angulos_recibidos;
 
   // ARRANCAR SEÑALES PWM
-  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1); // Hombro ENA
-  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1); // Codo ENB
-  HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1); // Base Servo
-  HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_2); // Muñeca Servo
-
+    HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1); // Hombro ENA
+    HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1); // Codo ENB
+    HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1); // Base Servo
+    HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_2); // Muñeca Servo
   // --- Variables para Motores con Realimentación (q2, q3) ---
   int posicionDeseada[2] = {1160, 2048};
   float errorAcumulado[2] = {0, 0};
@@ -646,8 +645,9 @@ void Start_task_PID(void *argument)
       // y = mx + n ; siendo y el valor final del timer [us] y x el ángulo deseado
       uint32_t pulse_q1 = (uint32_t)(angulos_recibidos.angles[0] * 11.11f + 500);
 
-      // Para q4 (Muñeca), usamos el centro en 1500 para permitir ángulos negativos.
-      float calc_q4 = (angulos_recibidos.angles[3] * 11.11f) + 1500.0f;
+      // Para q4 (Muñeca), aplicamos la calibración: 0º reales = 93º PWM
+      float angulo_calibrado_q4 = angulos_recibidos.angles[3] + 93.0f;
+      float calc_q4 = (angulo_calibrado_q4 * 11.11f) + 500.0f;
 
       // --- PROTECCIÓN (SATURACIÓN) ---
       // Evitamos que el valor baje de 500 o suba de 2500 pase lo que pase
@@ -683,14 +683,15 @@ void Start_task_PID(void *argument)
     HAL_ADC_Start(&hadc1);
 
     // Esperar y leer la primera conversión (Hombro - Rank 1)
-    if (HAL_ADC_PollForConversion(&hadc1, 10) == HAL_OK) {
-        valorPotenciometro[0] = HAL_ADC_GetValue(&hadc1);
-    }
+        if (HAL_ADC_PollForConversion(&hadc1, 10) == HAL_OK) {
+            valorPotenciometro[0] = HAL_ADC_GetValue(&hadc1);
+        }
 
-    // Esperar y leer la segunda conversión (Codo - Rank 2)
-    if (HAL_ADC_PollForConversion(&hadc1, 10) == HAL_OK) {
-        valorPotenciometro[1] = HAL_ADC_GetValue(&hadc1);
-    }
+        // Esperar y leer la segunda conversión (Codo - Rank 2)
+        if (HAL_ADC_PollForConversion(&hadc1, 10) == HAL_OK) {
+            valorPotenciometro[1] = HAL_ADC_GetValue(&hadc1);
+            adc_val_codo = valorPotenciometro[1];
+        }
     HAL_ADC_Stop(&hadc1);
 
     // 3. CÁLCULO DEL TIEMPO (dt)
