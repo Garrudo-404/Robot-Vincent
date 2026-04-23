@@ -23,6 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <math.h> // Para relaciones trigonométricas
+#include <stdlib.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -130,7 +131,7 @@ void Start_task_Planner(void *argument);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
+static uint16_t adc_val_codo = 0;
 /* USER CODE END 0 */
 
 /**
@@ -307,7 +308,7 @@ static void MX_ADC1_Init(void)
   hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
   hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-  hadc1.Init.NbrOfConversion = 1;
+  hadc1.Init.NbrOfConversion = 2;
   hadc1.Init.DMAContinuousRequests = DISABLE;
   hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
   if (HAL_ADC_Init(&hadc1) != HAL_OK)
@@ -319,7 +320,16 @@ static void MX_ADC1_Init(void)
   */
   sConfig.Channel = ADC_CHANNEL_1;
   sConfig.Rank = 1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+  sConfig.SamplingTime = ADC_SAMPLETIME_56CYCLES;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_2;
+  sConfig.Rank = 2;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -569,9 +579,10 @@ void Start_task_Comm(void *argument)
   for(;;)
   {
 	  // Test 1: Dibujar una línea recta desde donde esté hasta el destino
+	  /*
 	test_command.type = CMD_MOVE_LINEAR;
 	test_command.x = 200.0f;    // Destino X (mm)
-	test_command.y = 50.0f;     // Destino Y (mm)
+	test_command.y = 200.0f;     // Destino Y (mm)
 	test_command.z = 20.0f;     // Altura de dibujo (mm)
 	test_command.param = 0.0f;  // No se usa en líneas
 
@@ -579,12 +590,14 @@ void Start_task_Comm(void *argument)
 
 	 osDelay(10000); // Espera 10s para ver el movimiento
 
+	 */
+
 	 // Test 2: Volver a Home
 	 test_command.type = CMD_HOME;
 	 osMessageQueuePut(Queue_commandsHandle, &test_command, 0, osWaitForever);
 
 	 //Damos 20 segundos antes de la siguiente instrucción
-	 osDelay(20000);
+	 osDelay(5000);
   }
   /* USER CODE END 5 */
 }
@@ -604,15 +617,24 @@ void Start_task_PID(void *argument)
   Angles_t angulos_recibidos;
 
   // ARRANCAR SEÑALES PWM
-    HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1); // Hombro ENA
-    HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1); // Codo ENB
-    HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1); // Base Servo
-    HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_2); // Muñeca Servo
+  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1); // Hombro ENA
+  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1); // Codo ENB
+  HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1); // Base Servo
+  HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_2); // Muñeca Servo
+
   // --- Variables para Motores con Realimentación (q2, q3) ---
   int posicionDeseada[2] = {1160, 2048};
   float errorAcumulado[2] = {0, 0};
   uint32_t tiempoAnterior = HAL_GetTick();
-  float Kp = 1.6f, Ki = 0.5f;
+  float Kp = 2.5f; // Ajustado para mayor respuesta de corrección
+  float Ki = 0.8f; // Ajustado para vencer la gravedad en el hombro
+
+  HAL_ADC_Start(&hadc1);
+  HAL_ADC_PollForConversion(&hadc1, 10);
+  posicionDeseada[0] = HAL_ADC_GetValue(&hadc1); // El hombro se queda donde está
+  HAL_ADC_PollForConversion(&hadc1, 10);
+  posicionDeseada[1] = HAL_ADC_GetValue(&hadc1); // El codo se queda donde está
+  HAL_ADC_Stop(&hadc1);
 
   for(;;)
   {
@@ -620,15 +642,40 @@ void Start_task_PID(void *argument)
     if (osMessageQueueGet(Queue_anglesHandle, &angulos_recibidos, NULL, 0) == osOK)
     {
       // --- A. SERVOS LAZO ABIERTO (q1 y q4) ---
+      // 2000 us/180º = 11.11 de pendiente
+      // y = mx + n ; siendo y el valor final del timer [us] y x el ángulo deseado
       uint32_t pulse_q1 = (uint32_t)(angulos_recibidos.angles[0] * 11.11f + 500);
-      uint32_t pulse_q4 = (uint32_t)(angulos_recibidos.angles[3] * 11.11f + 500);
 
+      // Para q4 (Muñeca), usamos el centro en 1500 para permitir ángulos negativos.
+      float calc_q4 = (angulos_recibidos.angles[3] * 11.11f) + 1500.0f;
+
+      // --- PROTECCIÓN (SATURACIÓN) ---
+      // Evitamos que el valor baje de 500 o suba de 2500 pase lo que pase
+      if (calc_q4 < 500.0f)  calc_q4 = 500.0f;
+      if (calc_q4 > 2500.0f) calc_q4 = 2500.0f;
+
+      uint32_t pulse_q4 = (uint32_t)calc_q4;
+
+      // Enviar a los canales
       __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, pulse_q1); // Base
       __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_2, pulse_q4); // Muñeca
 
       // --- B. SETPOINTS PARA PI (q2 y q3) ---
-      posicionDeseada[0] = (int)(2327 - (angulos_recibidos.angles[1] * (2327.0f / 90.0f)));
-      posicionDeseada[1] = (int)((angulos_recibidos.angles[2] * 4095.0f) / 180.0f);
+      // Nueva fórmula calibrada: Base 2080 + (ángulo * sensibilidad)
+      //0º se corresponde con 2080, y 90º con 3700 de la lectura realizada con el ADC
+      //Rango: 3700 - 2080 = 1620 puntos de ADC por cada 90 grados.
+
+      posicionDeseada[0] = (int)(2080.0f + (angulos_recibidos.angles[1] * (1620.0f / 90.0f)));
+      // Limitar el objetivo entre el tope físico inferior y el superior detectado
+      if (posicionDeseada[0] < 1810) posicionDeseada[0] = 1810;
+      if (posicionDeseada[0] > 3750) posicionDeseada[0] = 3750;
+
+      // Nueva fórmula calibrada para el codo (Nuevo Servo)
+      posicionDeseada[1] = (int)(1830.0f + (angulos_recibidos.angles[2] * (1740.0f / 90.0f)));
+
+      // --- SEGURIDAD: LÍMITES MECÁNICOS ---
+      if (posicionDeseada[1] < 1800) posicionDeseada[1] = 1800;
+      if (posicionDeseada[1] > 3600) posicionDeseada[1] = 3600;
     }
 
     // 2. LECTURA ADC
@@ -636,43 +683,48 @@ void Start_task_PID(void *argument)
     HAL_ADC_Start(&hadc1);
 
     // Esperar y leer la primera conversión (Hombro - Rank 1)
-        if (HAL_ADC_PollForConversion(&hadc1, 10) == HAL_OK) {
-            valorPotenciometro[0] = HAL_ADC_GetValue(&hadc1);
-        }
+    if (HAL_ADC_PollForConversion(&hadc1, 10) == HAL_OK) {
+        valorPotenciometro[0] = HAL_ADC_GetValue(&hadc1);
+    }
 
-        // Esperar y leer la segunda conversión (Codo - Rank 2)
-        if (HAL_ADC_PollForConversion(&hadc1, 10) == HAL_OK) {
-            valorPotenciometro[1] = HAL_ADC_GetValue(&hadc1);
-        }
+    // Esperar y leer la segunda conversión (Codo - Rank 2)
+    if (HAL_ADC_PollForConversion(&hadc1, 10) == HAL_OK) {
+        valorPotenciometro[1] = HAL_ADC_GetValue(&hadc1);
+    }
     HAL_ADC_Stop(&hadc1);
 
     // 3. CÁLCULO DEL TIEMPO (dt)
     uint32_t tiempoActual = HAL_GetTick();
-    float dt = (tiempoActual - tiempoAnterior) / 1000.0f;
+    float dt = (float)(tiempoActual - tiempoAnterior) / 1000.0f;
     if (dt <= 0) dt = 0.01f;
     tiempoAnterior = tiempoActual;
 
     // 4. BUCLE DE CONTROL PI
     for (int i = 0; i < 2; i++)
     {
-      float error = posicionDeseada[i] - valorPotenciometro[i];
+      float error = (float)posicionDeseada[i] - (float)valorPotenciometro[i];
 
       // Zona muerta
-      if (error > -15 && error < 15) {
+      if (error > -10 && error < 10) {
           error = 0;
+      }
+
+      // Anti-windup (Corregido para permitir corrección en ambos sentidos)
+      if (fabsf(error) < 400.0f) {
+          errorAcumulado[i] += (error * dt);
+      } else {
           errorAcumulado[i] = 0;
       }
 
-      // Anti-windup
-      if (abs((int)error) < 150) errorAcumulado[i] += (error * dt);
-      else errorAcumulado[i] = 0;
+      // Limitación de la integral para evitar saturación excesiva
+      if (errorAcumulado[i] > 500.0f) errorAcumulado[i] = 500.0f;
+      if (errorAcumulado[i] < -500.0f) errorAcumulado[i] = -500.0f;
 
       float pwm_calc = (Kp * error) + (Ki * errorAcumulado[i]);
 
       // La velocidad es siempre el valor absoluto del cálculo
       uint32_t velocidad = (uint32_t)fabsf(pwm_calc);
-      if (velocidad > 799) velocidad = 799;
-      if (salidaPWM < -799) salidaPWM = -799;
+      if (velocidad > 700) velocidad = 700; // Aumentado para vencer carga mecánica
 
       // 5. SALIDA AL L298N (IN1, IN2 y ENA)
       if (i == 0) // MOTOR HOMBRO (Joint 2)
@@ -774,8 +826,8 @@ void Start_task_IK(void *argument)
         a.angles[3] = q4_rad * (180.0f / M_PI);
 
         // 8. Gripper y estado del pincel
-        a.angles[4] = p.pen_down ? 45.0f : 0.0f; // 45º cerrado, 0º abierto (ajústalo a tus servos)
-        a.pen_state = p.pen_down;
+        //a.angles[4] = p.pen_down ? 45.0f : 0.0f; // 45º cerrado, 0º abierto
+        //a.pen_state = p.pen_down;
 
         // 9. Enviar a la cola de la tarea PID
         osMessageQueuePut(Queue_anglesHandle, &a, 0, osWaitForever);
@@ -798,7 +850,7 @@ void Start_task_Planner(void *argument)
   Point3D_t point;
 
   // Posición actual del robot (inicializada en Home al arrancar)
-  float current_x = 100.0f, current_y = 0.0f, current_z = 100.0f;
+  float current_x = 350.0f, current_y = 0.0f, current_z = 100.0f;
   const int pasos = 50; // Número de segmentos en los que dividimos la línea
 
   for(;;)
@@ -818,8 +870,8 @@ void Start_task_Planner(void *argument)
           point.x = current_x + (diff_x * i);
           point.y = current_y + (diff_y * i);
           point.z = current_z + (diff_z * i);
-          point.speed = 10.0f; // El control de velocidad lo dejaremos para más adelante, pero damos un valor para verificar que se pasa correctamente el dato
-          point.pen_down = 1;
+          //point.speed = 10.0f; // El control de velocidad lo dejaremos para más adelante, pero damos un valor para verificar que se pasa correctamente el dato
+          //point.pen_down = 1;
 
           osMessageQueuePut(Queue_pointsHandle, &point, 0, osWaitForever);
           osDelay(20); // Velocidad de generación de puntos
@@ -833,11 +885,11 @@ void Start_task_Planner(void *argument)
       else if (cmd.type == CMD_HOME)
       {
         // En Home, mandamos un punto directo (Posibilidad de interpolarlo si vemos que se mueve muy bruscamente desde la posición en la que pinta)
-        point.x = 100.0f; point.y = 0.0f; point.z = 100.0f;
-        point.pen_down = 0;
+        point.x = 350.0f; point.y = 0.0f; point.z = 100.0f;
+        //point.pen_down = 0;
         osMessageQueuePut(Queue_pointsHandle, &point, 0, osWaitForever);
 
-        current_x = 100.0f; current_y = 0.0f; current_z = 100.0f;
+        current_x = 350.0f; current_y = 0.0f; current_z = 100.0f;
       }
     }
   }
