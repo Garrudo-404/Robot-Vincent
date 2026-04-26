@@ -37,7 +37,7 @@
 #define L1 40.0f  // Altura desde la base hasta la articulación del hombro
 #define L2 184.56f  // Longitud del eslabón del hombro
 #define L3 114.5f  // Longitud del eslabón del codo
-#define L4 206.0f   // Longitud desde la muñeca hasta la punta del rotulador
+#define L4 110.0f   // Longitud desde la muñeca hasta la punta del rotulador
 #define L4ini 110.07f // Longitud cuando no tiene el rotulador, desde la muñeca hasta la punta del gripper
 /* USER CODE END PD */
 
@@ -98,18 +98,7 @@ const osMessageQueueAttr_t Queue_angles_attributes = {
 };
 /* USER CODE BEGIN PV */
 
-// Variables del Controlador PI
-int posicionDeseada = 2048; // El objetivo en puntos de ADC (0 a 4095)
-float Kp = 2.0;             // Fuerza Proporcional: Reacciona al error instantáneo
-float Ki = 0.5;             // Fuerza Integral: Vence la fricción acumulando el error
-int error = 0;              // Distancia entre donde estoy y donde quiero ir
-float errorAcumulado = 0;   // Suma de los errores pasados (memoria)
-int salidaPWM = 0;          // La "fuerza" final de -1000 a 1000 que le damos al motor
 
-// Variables para medir el tiempo (necesario para la Integral)
-uint32_t tiempoAnterior = 0; // El instante en el que miramos el reloj por última vez
-uint32_t tiempoActual = 0;   // La hora actual
-float dt = 0;                // Diferencia de tiempo (Delta T) transcurrido
 
 /* USER CODE END PV */
 
@@ -132,6 +121,12 @@ void Start_task_Planner(void *argument);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 static uint16_t adc_val_codo = 0;
+static int calculo_angulo_base = 0;
+static int calculo_angulo_hombro = 0;
+static int calculo_angulo_codo = 0;
+static int calculo_angulo_muñeca = 0;
+
+static int seguimiento_rutina = 0;
 /* USER CODE END 0 */
 
 /**
@@ -148,7 +143,8 @@ int main(void)
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
+
+	HAL_Init();
 
   /* USER CODE BEGIN Init */
 
@@ -578,27 +574,54 @@ void Start_task_Comm(void *argument)
 
   for(;;)
   {
-	  // Test 1: Dibujar una línea recta desde donde esté hasta el destino
-	  /*
-	test_command.type = CMD_MOVE_LINEAR;
-	test_command.x = 200.0f;    // Destino X (mm)
-	test_command.y = 200.0f;     // Destino Y (mm)
-	test_command.z = 20.0f;     // Altura de dibujo (mm)
-	test_command.param = 0.0f;  // No se usa en líneas
 
-	osMessageQueuePut(Queue_commandsHandle, &test_command, 0, osWaitForever);
+	  //1. PUNTO INICIAL (En el aire, lado IZQUIERDO)
+	      // Posicionamos el brazo antes de tocar el lienzo
+	      test_command.type = CMD_MOVE_LINEAR;
+	      test_command.x = 300.0f;
+	      test_command.y = -100.0f; // Izquierda
+	      test_command.z = 100.0f;  // Alto (fuera del lienzo)
+	      seguimiento_rutina = 1;
+	      osMessageQueuePut(Queue_commandsHandle, &test_command, 0, osWaitForever);
 
-	 osDelay(10000); // Espera 10s para ver el movimiento
+	      // Esperamos a que llegue. (Si el trayecto es largo, damos tiempo de sobra)
+	      osDelay(8000);
 
-	 */
+	      //2. ACERCAMIENTO AL LIENZO (Bajar en Z)
+	      // Bajamos el rotulador suavemente hasta la superficie de dibujo
+	      test_command.type = CMD_MOVE_LINEAR;
+	      test_command.x = 330.0f;
+	      test_command.y = -100.0f;
+	      test_command.z = 50.0f;   // Altura de contacto con el lienzo
+	      seguimiento_rutina = 2;
+	      osMessageQueuePut(Queue_commandsHandle, &test_command, 0, osWaitForever);
 
-	 // Test 2: Volver a Home
-	 test_command.type = CMD_HOME;
-	 osMessageQueuePut(Queue_commandsHandle, &test_command, 0, osWaitForever);
+	      osDelay(5000); // Tiempo para bajar con calma
 
-	 //Damos 20 segundos antes de la siguiente instrucción
-	 osDelay(5000);
+	      // 3. LÍNEA DE IZQUIERDA A DERECHA
+	      // Desplazamiento horizontal manteniendo la punta apoyada
+	      test_command.type = CMD_MOVE_LINEAR;
+	      test_command.x = 330.0f;
+	      test_command.y = 100.0f;  // Derecha
+	      test_command.z = 50.0f;   // Mantiene la altura de contacto
+	      seguimiento_rutina = 3;
+	      osMessageQueuePut(Queue_commandsHandle, &test_command, 0, osWaitForever);
+
+	      // Esta es la línea principal. Como son 200 pasos * 30ms = 6 segundos de movimiento.
+	      osDelay(8000);
+
+	      // 4. RETIRARSE (Subir en Z) ---
+	      // Para no emborronar al terminar, subimos el brazo
+	      test_command.type = CMD_MOVE_LINEAR;
+	      test_command.x = 300.0f;
+	      test_command.y = 100.0f;
+	      test_command.z = 60.0f;
+	      seguimiento_rutina = 4;
+	      osMessageQueuePut(Queue_commandsHandle, &test_command, 0, osWaitForever);
+
+	      osDelay(8000); // Pausa antes de repetir el ciclo completo
   }
+
   /* USER CODE END 5 */
 }
 
@@ -612,20 +635,22 @@ para caracterizar la realimentación @brief Function implementing the task_PID t
 */
 /* USER CODE END Header_Start_task_PID */
 void Start_task_PID(void *argument)
-{
-  /* USER CODE BEGIN Start_task_PID */
-  Angles_t angulos_recibidos;
+{ /* USER CODE BEGIN Start_task_PID */
+	  // ARRANCAR SEÑALES PWM
+	    HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1); // Hombro ENA
+	    HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1); // Codo ENB
+	    HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1); // Base Servo
+	    HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_2); // Muñeca Servo
 
-  // ARRANCAR SEÑALES PWM
-    HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1); // Hombro ENA
-    HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1); // Codo ENB
-    HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1); // Base Servo
-    HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_2); // Muñeca Servo
+
+  Angles_t angulos_recibidos;
+  static uint32_t last_pulse_q4 = 0; // Para evitar temblores guardamos el estado anterior
+
   // --- Variables para Motores con Realimentación (q2, q3) ---
   int posicionDeseada[2] = {1160, 2048};
   float errorAcumulado[2] = {0, 0};
   uint32_t tiempoAnterior = HAL_GetTick();
-  float Kp = 2.5f; // Ajustado para mayor respuesta de corrección
+  float Kp = 2.2f; // Ajustado para mayor respuesta de corrección
   float Ki = 0.8f; // Ajustado para vencer la gravedad en el hombro
 
   HAL_ADC_Start(&hadc1);
@@ -637,28 +662,36 @@ void Start_task_PID(void *argument)
 
   for(;;)
   {
-    // 1. RECIBIR ÓRDENES Y ACTUALIZAR SETPOINTS
+    // RECIBIR ÓRDENES Y ACTUALIZAR SETPOINTS
     if (osMessageQueueGet(Queue_anglesHandle, &angulos_recibidos, NULL, 0) == osOK)
     {
-      // --- A. SERVOS LAZO ABIERTO (q1 y q4) ---
-      // 2000 us/180º = 11.11 de pendiente
-      // y = mx + n ; siendo y el valor final del timer [us] y x el ángulo deseado
-      uint32_t pulse_q1 = (uint32_t)(angulos_recibidos.angles[0] * 11.11f + 500);
+    	// --- SERVOS LAZO ABIERTO (q1 y q4) ---
+    	// 2000 us/180º = 11.11 de pendiente
+    	uint32_t pulse_q1 = (uint32_t)(angulos_recibidos.angles[0] * 11.11f + 500);
 
-      // Para q4 (Muñeca), aplicamos la calibración: 0º reales = 93º PWM
-      float angulo_calibrado_q4 = angulos_recibidos.angles[3] + 93.0f;
-      float calc_q4 = (angulo_calibrado_q4 * 11.11f) + 500.0f;
+    	// --- NUEVA CALIBRACIÓN MUÑECA (q4) ---
+    	// Referencia: 0º Reales = 25º PWM.
+    	// Comportamiento: Al subir ángulos en código, baja físicamente (Inversión).
+    	// Fórmula: (Referencia - Ángulo_Deseado)
+    	float angulo_calibrado_q4 = 6.0f - angulos_recibidos.angles[3];
 
-      // --- PROTECCIÓN (SATURACIÓN) ---
-      // Evitamos que el valor baje de 500 o suba de 2500 pase lo que pase
-      if (calc_q4 < 500.0f)  calc_q4 = 500.0f;
-      if (calc_q4 > 2500.0f) calc_q4 = 2500.0f;
+    	// Convertimos a microsegundos (PWM)
+    	float calc_q4 = (angulo_calibrado_q4 * 11.11f) + 500.0f;
 
-      uint32_t pulse_q4 = (uint32_t)calc_q4;
+    	// --- PROTECCIÓN (SATURACIÓN) ---
+    	// Ajustamos límites para permitir el rango de -130º si es necesario
+    	if (calc_q4 < 400.0f)  calc_q4 = 400.0f;  // Límite mínimo de seguridad
+    	if (calc_q4 > 2600.0f) calc_q4 = 2600.0f; // Límite máximo de seguridad
 
-      // Enviar a los canales
-      __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, pulse_q1); // Base
-      __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_2, pulse_q4); // Muñeca
+    	uint32_t pulse_q4 = (uint32_t)calc_q4;
+
+    	// --- ENVÍO A TIMERS CON FILTRO ANTI-TEMBLOR ---
+    	__HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, pulse_q1); // Base
+
+    	if(abs((int)pulse_q4 - (int)last_pulse_q4) > 2) {
+    	    __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_2, pulse_q4); // Muñeca
+    	    last_pulse_q4 = pulse_q4;
+    	}
 
       // --- B. SETPOINTS PARA PI (q2 y q3) ---
       // Nueva fórmula calibrada: Base 2080 + (ángulo * sensibilidad)
@@ -770,6 +803,7 @@ void Start_task_PID(void *argument)
   /* USER CODE END Start_task_PID */
 }
 
+
 /* USER CODE BEGIN Header_Start_task_IK */
 /**
 * Esta función recibe las coordenadas (tipo Point3D_t) y se encarga de calcular la cinemática inversa del robot (los ángulos requeridos por los actuadores)
@@ -826,6 +860,12 @@ void Start_task_IK(void *argument)
         a.angles[2] = q3_rad * (180.0f / M_PI);
         a.angles[3] = q4_rad * (180.0f / M_PI);
 
+        calculo_angulo_base = (int) a.angles[0];
+        calculo_angulo_hombro = (int) a.angles[1];
+        calculo_angulo_codo = (int) a.angles[2];
+        calculo_angulo_muñeca = (int) a.angles[3];
+
+
         // 8. Gripper y estado del pincel
         //a.angles[4] = p.pen_down ? 45.0f : 0.0f; // 45º cerrado, 0º abierto
         //a.pen_state = p.pen_down;
@@ -852,8 +892,8 @@ void Start_task_Planner(void *argument)
 
   // Posición actual del robot (inicializada en Home al arrancar)
   float current_x = 350.0f, current_y = 0.0f, current_z = 100.0f;
-  const int pasos = 50; // Número de segmentos en los que dividimos la línea
-
+  const int pasos = 200; // Número de segmentos en los que dividimos la línea
+  point.pen_down = 1;
   for(;;)
   {
     if (osMessageQueueGet(Queue_commandsHandle, &cmd, NULL, osWaitForever) == osOK)
@@ -872,7 +912,7 @@ void Start_task_Planner(void *argument)
           point.y = current_y + (diff_y * i);
           point.z = current_z + (diff_z * i);
           //point.speed = 10.0f; // El control de velocidad lo dejaremos para más adelante, pero damos un valor para verificar que se pasa correctamente el dato
-          //point.pen_down = 1;
+          point.pen_down = 1;
 
           osMessageQueuePut(Queue_pointsHandle, &point, 0, osWaitForever);
           osDelay(20); // Velocidad de generación de puntos
@@ -891,6 +931,31 @@ void Start_task_Planner(void *argument)
         osMessageQueuePut(Queue_pointsHandle, &point, 0, osWaitForever);
 
         current_x = 350.0f; current_y = 0.0f; current_z = 100.0f;
+      }
+      else if (cmd.type == CMD_GRIPPER)
+      {
+    	  uint8_t anguloTest = 0;
+    	  uint32_t pulse_test = (uint32_t)(anguloTest * 11.11f + 500.0f);
+
+    	  // 2. Saturación de seguridad para no forzar el servo
+    	  if (pulse_test < 500)  pulse_test = 500;
+    	  if (pulse_test > 2500) pulse_test = 2500;
+
+    	  // 3. Enviamos al Timer (HTIM4 es el de tus servos)
+    	  // Prueba primero el Canal 1 (Base)
+    	   __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_3, pulse_test);
+
+    	    HAL_Delay(100); // Pequeña pausa para estabilidad
+    	  if (point.pen_down == 1){
+    		  uint8_t anguloTest = 50;
+    		  uint32_t pulse_test = (uint32_t)(anguloTest * 11.11f + 500.0f);
+    		  point.pen_down = 0;
+    	  }
+    	  else if (point.pen_down == 0){
+    		  uint8_t anguloTest = 180;
+    		  uint32_t pulse_test = (uint32_t)(anguloTest * 11.11f + 500.0f);
+    		  point.pen_down = 1;
+    	  }
       }
     }
   }
