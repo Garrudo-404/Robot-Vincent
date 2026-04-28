@@ -120,6 +120,8 @@ void Start_task_Planner(void *argument);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 static uint16_t adc_val_codo = 0;
+static uint16_t adc_val_hombro = 0;
+
 static int calculo_angulo_base = 0;
 static int calculo_angulo_hombro = 0;
 static int calculo_angulo_codo = 0;
@@ -571,13 +573,16 @@ void Start_task_Comm(void *argument)
   /* USER CODE BEGIN 5 */
   Command_t test_command;
 
-  float mesa_X = 150.0f;
-  float mesa_Y_actual = 250.0f; // Primera herramienta de color
-  float mesa_Y_nuevo = 300.0f;  // Segunda herramienta de color (Separación de 50mm)
+
+ // float mesa_X_colores[3] = {150.0f, 150.0f, 110.0f};
+  //float mesa_Y_colores[3] = {250.0f, 360.0f, 470.0f};
+  float mesa_X_colores[3] = {150.0f, 100.0f, 30.0f};
+  float mesa_Y_colores[3] = {250.0f, 340.0f, 360.0f};
+  int color_actual = 0;
 
   // Subimos Z: Si la mesa está muy baja, la muñeca tiene que doblarse demasiado
-  float mesa_Z_aire = 110.0f;
-  float mesa_Z_mesa = 85.0f;    // Altura de recogida/entrega
+  float mesa_Z_aire = 120.0f;
+  float mesa_Z_mesa = 95.0f;    // Altura de recogida/entrega
 
   osDelay(2000);
 
@@ -608,14 +613,14 @@ void Start_task_Comm(void *argument)
     test_command.x = 300.0f; test_command.y = 150.0f; test_command.z = 100.0f;
     seguimiento_rutina = 4;
     osMessageQueuePut(Queue_commandsHandle, &test_command, 0, osWaitForever);
-    osDelay(8000);
+    osDelay(5000);
 
     //CAMBIO DE ROTULADOR (Coordenadas Corregidas)
 
     // 5. IR A LA MESA (Posicionarse sobre el color actual)
     test_command.type = CMD_MOVE_LINEAR;
-    test_command.x = mesa_X;
-    test_command.y = mesa_Y_actual;
+    test_command.x = mesa_X_colores[color_actual];
+    test_command.y = mesa_Y_colores[color_actual];
     test_command.z = mesa_Z_aire;
     seguimiento_rutina = 5;
     osMessageQueuePut(Queue_commandsHandle, &test_command, 0, osWaitForever);
@@ -624,12 +629,12 @@ void Start_task_Comm(void *argument)
     // 6. DEJAR ROTULADOR
     test_command.z = mesa_Z_mesa;
     osMessageQueuePut(Queue_commandsHandle, &test_command, 0, osWaitForever);
-    osDelay(8000);
+    osDelay(5000);
 
     test_command.type = CMD_GRIPPER; // Abre
     seguimiento_rutina = 6;
     osMessageQueuePut(Queue_commandsHandle, &test_command, 0, osWaitForever);
-    osDelay(5000);
+    osDelay(3000);
 
     // 7. SUBIR Y MOVER AL SIGUIENTE
     test_command.type = CMD_MOVE_LINEAR;
@@ -637,7 +642,9 @@ void Start_task_Comm(void *argument)
     osMessageQueuePut(Queue_commandsHandle, &test_command, 0, osWaitForever);
     osDelay(5000);
 
-    test_command.y = mesa_Y_nuevo;
+    ++color_actual;
+    test_command.x = mesa_X_colores[color_actual];
+    test_command.y = mesa_Y_colores[color_actual];
     seguimiento_rutina = 7;
     osMessageQueuePut(Queue_commandsHandle, &test_command, 0, osWaitForever);
     osDelay(5000);
@@ -660,9 +667,11 @@ void Start_task_Comm(void *argument)
     osDelay(5000);
 
     //Intercambiar variables para que en el siguiente ciclo deje el que acaba de coger.
-    float temp = mesa_Y_actual;
-    mesa_Y_actual = mesa_Y_nuevo;
-    mesa_Y_nuevo = temp;
+    //float temp = mesa_Y_actual;
+    //mesa_Y_actual = mesa_Y_nuevo;
+    //mesa_Y_nuevo = temp;
+
+    if (color_actual ==2) color_actual = 0;
   }
 }
 
@@ -761,6 +770,7 @@ void Start_task_PID(void *argument)
     // Esperar y leer la primera conversión (Hombro - Rank 1)
         if (HAL_ADC_PollForConversion(&hadc1, 10) == HAL_OK) {
             valorPotenciometro[0] = HAL_ADC_GetValue(&hadc1);
+            adc_val_hombro = valorPotenciometro[1];
         }
 
         // Esperar y leer la segunda conversión (Codo - Rank 2)
@@ -950,7 +960,7 @@ void Start_task_Planner(void *argument)
 
     	    // Definimos que queremos movernos a, por ejemplo, 20mm por segundo
     	    // Si cada paso tarda 20ms (0.02s), en cada paso recorremos (Vel * 0.02) mm
-    	    int pasos_dinamicos = (int)(dist / 1.5f); // Ajustamos el 1.5f para cambiar la velocidad global
+    	    int pasos_dinamicos = (int)(dist / 2.5f); // Ajustamos el 1.5f para cambiar la velocidad global
     	    if (pasos_dinamicos < 10) pasos_dinamicos = 10; // Mínimo de pasos
 
     	    float diff_x = (cmd.x - current_x) / pasos_dinamicos;
