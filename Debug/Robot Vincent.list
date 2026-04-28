@@ -2396,11 +2396,9 @@ void Start_task_Comm(void *argument)
  8001616:	b092      	sub	sp, #72	@ 0x48
  8001618:	af00      	add	r7, sp, #0
  800161a:	6078      	str	r0, [r7, #4]
+  /* USER CODE BEGIN 5 */
   Command_t test_command;
 
-
- // float mesa_X_colores[3] = {150.0f, 150.0f, 110.0f};
-  //float mesa_Y_colores[3] = {250.0f, 360.0f, 470.0f};
   float mesa_X_colores[3] = {150.0f, 100.0f, 30.0f};
  800161c:	4a94      	ldr	r2, [pc, #592]	@ (8001870 <Start_task_Comm+0x25c>)
  800161e:	f107 0318 	add.w	r3, r7, #24
@@ -2705,10 +2703,6 @@ void Start_task_Comm(void *argument)
     osDelay(5000);
  8001858:	f241 3088 	movw	r0, #5000	@ 0x1388
  800185c:	f003 fd4a 	bl	80052f4 <osDelay>
-    //Intercambiar variables para que en el siguiente ciclo deje el que acaba de coger.
-    //float temp = mesa_Y_actual;
-    //mesa_Y_actual = mesa_Y_nuevo;
-    //mesa_Y_nuevo = temp;
 
     if (color_actual ==2) color_actual = 0;
  8001860:	6c7b      	ldr	r3, [r7, #68]	@ 0x44

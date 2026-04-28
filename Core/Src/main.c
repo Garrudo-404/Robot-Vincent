@@ -573,9 +573,6 @@ void Start_task_Comm(void *argument)
   /* USER CODE BEGIN 5 */
   Command_t test_command;
 
-
- // float mesa_X_colores[3] = {150.0f, 150.0f, 110.0f};
-  //float mesa_Y_colores[3] = {250.0f, 360.0f, 470.0f};
   float mesa_X_colores[3] = {150.0f, 100.0f, 30.0f};
   float mesa_Y_colores[3] = {250.0f, 340.0f, 360.0f};
   int color_actual = 0;
@@ -665,11 +662,6 @@ void Start_task_Comm(void *argument)
     seguimiento_rutina = 9;
     osMessageQueuePut(Queue_commandsHandle, &test_command, 0, osWaitForever);
     osDelay(5000);
-
-    //Intercambiar variables para que en el siguiente ciclo deje el que acaba de coger.
-    //float temp = mesa_Y_actual;
-    //mesa_Y_actual = mesa_Y_nuevo;
-    //mesa_Y_nuevo = temp;
 
     if (color_actual ==2) color_actual = 0;
   }
